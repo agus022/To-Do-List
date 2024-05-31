@@ -1,15 +1,15 @@
 module Main where
---importacion de las librerias necesarias para el proyecto 
 import System.IO
-import Data.Time (UTCTime, getCurrentTime, parseTimeM, defaultTimeLocale)
+import Data.Time (UTCTime, getCurrentTime, parseTimeM, defaultTimeLocale, formatTime)
 import Data.List (intercalate)
 import System.Directory (doesFileExist)
 import Data.Char (toUpper, toLower)
+import Control.Monad (unless)
+import Control.Exception (bracket)
+import Control.Applicative ((<|>))
 
---definición del tipo de datos Priority
 data Priority = Baja | Media | Alta deriving (Show, Read, Eq)
 
---representa una tarea con título, categoría, fecha de vencimiento opcional y prioridad
 data Task = Task {
     title :: String,
     category :: String,
@@ -17,23 +17,19 @@ data Task = Task {
     priority :: Priority
 } deriving (Show, Read, Eq)
 
---Lista de tareas
 type TaskList = [Task]
 
---definicion de los comandos que el usuario puede ingresar: agregar, eliminar, listar y salir
-data Command = Nueva | Borrar | Lista | Salir deriving (Show, Read, Eq)
+data Command = Nueva | Borrar | Editar | Lista | Filtrar | Salir deriving (Show, Read, Eq)
 
---INICIAR EL PROGRAMA   
 main :: IO ()
 main = do
     putStrLn ">> > Bienvenido a HaskellPlanner < <<"
     tasks <- loadTasks
     mainLoop tasks
 
---ciclo/bucle inicial donde el usuario podra seleccionar los comandos/acciones que quiera realizar
 mainLoop :: TaskList -> IO ()
 mainLoop tasks = do
-    putStrLn "Ingresa la accion deseada (Nueva , Borrar, Lista, Salir):"
+    putStrLn "Ingresa la acción deseada (Nueva, Borrar, Editar, Lista, Filtrar, Salir):"
     cmd <- getLine
     case readCommand cmd of
         Just Nueva -> do
@@ -43,82 +39,128 @@ mainLoop tasks = do
             putStrLn "Ingresa el TITULO de la tarea a BORRAR:"
             titleToRemove <- getLine
             let tasks' = removeTask titleToRemove tasks
+            unless (length tasks == length tasks') $ putStrLn "Tarea borrada."
+            mainLoop tasks'
+        Just Editar -> do
+            putStrLn "Ingresa el TITULO de la tarea a EDITAR:"
+            titleToEdit <- getLine
+            tasks' <- editTask titleToEdit tasks
             mainLoop tasks'
         Just Lista -> do
             putStrLn "---- LISTA DE TAREAS ----"
             mapM_ printTask tasks
             mainLoop tasks
+        Just Filtrar -> do
+            putStrLn "Ingresa la prioridad para filtrar las tareas (Baja, Media, Alta):"
+            priorityStr <- getLine
+            let priorityVal = readPriority priorityStr
+            let filteredTasks = filterTasksByPriority priorityVal tasks
+            putStrLn $ "---- TAREAS CON PRIORIDAD " ++ show priorityVal ++ " ----"
+            mapM_ printTask filteredTasks
+            mainLoop tasks
         Just Salir -> do
             saveTasks tasks
             putStrLn "Byeeee :)"
         Nothing -> do
-            putStrLn "ERROR!!! Comando invalido."
+            putStrLn "ERROR!!! Comando inválido."
             mainLoop tasks
 
---Funcion para eleiminar la tarea toamdno como referencia su titulo 
 removeTask :: String -> TaskList -> TaskList
-removeTask _ [] = []
-removeTask titleToRemove (task:tasks) =
-    if title task == titleToRemove
-        then removeTask titleToRemove tasks
-        else task : removeTask titleToRemove tasks
+removeTask titleToRemove = filter ((/= titleToRemove) . title)
 
--- Función para leer y convertir un comando de entrada del usuario
 readCommand :: String -> Maybe Command
 readCommand str = case reads (capitalize str) of
     [(cmd, "")] -> Just cmd
     _           -> Nothing
 
--- Función para capitalizar una cadena: primer carácter en mayúsculas y el resto en minúsculas
 capitalize :: String -> String
+capitalize [] = []
 capitalize (x:xs) = toUpper x : map toLower xs
-capitalize []     = []
 
--- Función para solicitar al usuario los detalles de una nueva tarea
 promptNewTask :: IO Task
 promptNewTask = do
-    putStrLn "Ingresa el titulo de la tarea nueva:"
+    putStrLn "Ingresa el título de la tarea nueva:"
     title <- getLine
-    putStrLn "Ingresa la categoria de la tarea:"
+    putStrLn "Ingresa la categoría de la tarea:"
     category <- getLine
-    putStrLn "Ingresa la fecha de vencimiento (yyyy-mm-dd) o dejalo en blanco:"
-    dueDateStr <- getLine
-    dueDate <- if null dueDateStr
-                then return Nothing
-                else Just <$> parseDate dueDateStr
+    dueDate <- promptDueDate
     putStrLn "Ingresa la prioridad (Baja, Media, Alta):"
     priorityStr <- getLine
     let priority = readPriority priorityStr
     return Task { title = title, category = category, dueDate = dueDate, priority = priority }
 
--- Función para analizar una fecha desde una cadena
-parseDate :: String -> IO UTCTime
-parseDate str = parseTimeM True defaultTimeLocale "%Y-%m-%d" str
+promptDueDate :: IO (Maybe UTCTime)
+promptDueDate = do
+    putStrLn "Ingresa la fecha de vencimiento (yyyy-mm-dd) o déjalo en blanco:"
+    dueDateStr <- getLine
+    if null dueDateStr
+        then return Nothing
+        else do
+            parsedDate <- parseDate dueDateStr
+            case parsedDate of
+                Just date -> return (Just date)
+                Nothing -> do
+                    putStrLn "Fecha inválida. Intenta de nuevo."
+                    promptDueDate
 
--- Función para leer y convertir una prioridad de entrada del usuario
+parseDate :: String -> IO (Maybe UTCTime)
+parseDate str = return $ parseTimeM True defaultTimeLocale "%Y-%m-%d" str
+
 readPriority :: String -> Priority
 readPriority str = case reads (capitalize str) of
     [(priority, "")] -> priority
     _                -> Baja
 
--- Función para imprimir los detalles de una tarea
 printTask :: Task -> IO ()
 printTask task = do
-    putStrLn $ "Titulo: " ++ title task
-    putStrLn $ "Categoria: " ++ category task
-    putStrLn $ "Fecha Vencimiento: " ++ maybe "None" show (dueDate task)
+    putStrLn $ "Título: " ++ title task
+    putStrLn $ "Categoría: " ++ category task
+    putStrLn $ "Fecha Vencimiento: " ++ maybe "None" (formatTime defaultTimeLocale "%Y-%m-%d") (dueDate task)
     putStrLn $ "Prioridad: " ++ show (priority task)
     putStrLn "-------------------------"
 
--- Función para guardar las tareas en un archivo
 saveTasks :: TaskList -> IO ()
-saveTasks tasks = do
-    writeFile "tareas.txt" (show tasks)
+saveTasks tasks = bracket (openFile "tareas.txt" WriteMode) hClose $ \handle ->
+    hPutStrLn handle (show tasks)
 
--- Función para cargar las tareas desde un archivo
 loadTasks :: IO TaskList
 loadTasks = do
     fileExists <- doesFileExist "tareas.txt"
     if fileExists
-        then read <$> readFile "tareas.txt"
+        then bracket (openFile "tareas.txt" ReadMode) hClose $ \handle -> do
+            contents <- hGetContents handle
+            let tasks = read contents
+            length tasks `seq` return tasks 
         else return []
+
+editTask :: String -> TaskList -> IO TaskList
+editTask titleToEdit tasks = do
+    let taskToEdit = filter ((== titleToEdit) . title) tasks
+    if null taskToEdit
+        then do
+            putStrLn "No se encontró la tarea con ese título."
+            return tasks
+        else do
+            putStrLn "Editando tarea:"
+            editedTask <- promptEditTask (head taskToEdit)
+            let updatedTasks = editedTask : removeTask titleToEdit tasks
+            putStrLn "Tarea editada."
+            return updatedTasks
+
+promptEditTask :: Task -> IO Task
+promptEditTask oldTask = do
+    putStrLn $ "Ingresa Titulo NUEVO (titulo actual " ++ title oldTask ++ "):"
+    newTitle <- getLine
+    putStrLn $ "Ingresa Categoria NUEVA (categoria actual " ++ category oldTask ++ "):"
+    newCategory <- getLine
+    newDueDate <- promptDueDate
+    putStrLn $ "Ingresa Prioridad NUEVA (prioridad actual " ++ show (priority oldTask) ++ "):"
+    newPriorityStr <- getLine
+    let newPriority = readPriority newPriorityStr
+    return Task { title = if null newTitle then title oldTask else newTitle
+                , category = if null newCategory then category oldTask else newCategory
+                , dueDate = newDueDate <|> dueDate oldTask
+                , priority = newPriority }
+
+filterTasksByPriority :: Priority -> TaskList -> TaskList
+filterTasksByPriority p = filter ((== p) . priority)

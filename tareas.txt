@@ -1,1 +1,1 @@
-[Task {title = "tarea1", category = "tareas", dueDate = Just 2024-05-27 00:00:00 UTC, priority = Media},Task {title = "PF-RGG", category = "proyectos", dueDate = Just 2024-05-29 00:00:00 UTC, priority = Alta}]
+[Task {title = "TAREA-1", category = "tareas", dueDate = Just 2001-01-01 00:00:00 UTC, priority = Baja},Task {title = "TAREA-3", category = "tareas", dueDate = Just 2024-06-10 00:00:00 UTC, priority = Baja},Task {title = "TAREA-2", category = "tareas", dueDate = Just 2024-06-05 00:00:00 UTC, priority = Baja}]
